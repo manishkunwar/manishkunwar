@@ -1,0 +1,278 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Admin - Blog</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">Blog</div>
+    <a class="nav-item" href="index.html">← Back to Blog</a>
+  </aside>
+
+  <main class="main">
+    <div id="authWrap">
+      <div class="admin-panel" style="max-width:420px">
+        <h2 class="small">Admin Access</h2>
+        <p class="small" style="margin-bottom:12px;color:var(--muted)">Enter passcode to unlock the admin panel.</p>
+        <label class="small">Passcode</label>
+        <input id="passInput" class="input" type="password" placeholder="Enter passcode" />
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button id="unlockBtn" class="btn">Unlock</button>
+          <button id="cancelBtn" class="btn ghost" onclick="location.href='index.html'">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="adminArea" style="display:none">
+      <h1 style="margin-bottom:16px">Admin Panel</h1>
+      <div id="versionBadge" class="version-badge">Loading data...</div>
+
+      <div class="admin-panel">
+        <h3 id="formTitle">Create Blog Post</h3>
+
+        <label>Title</label>
+        <input id="title" class="input" />
+
+        <label>Category</label>
+        <select id="tag" class="input">
+          <option>Blog</option><option>Movies</option><option>TV</option><option>Anime</option>
+          <option>Manga</option><option>Music</option><option>Books</option><option>Papers</option>
+        </select>
+
+        <label>Review</label>
+        <textarea id="review" class="input" rows="6"></textarea>
+
+        <label>Photo (optional)</label>
+        <input id="photo" type="file" accept="image/*" />
+
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button id="saveBtn" class="btn">Save Post</button>
+          <button id="exportBtn" class="export-btn">💾 Export blogs.json</button>
+          <button id="importBtn" class="import-btn">📂 Import blogs.json</button>
+          <input type="file" id="importFile" accept=".json" style="display:none;">
+
+
+        </div>
+      </div>
+
+      <div style="height:20px"></div>
+
+      <div id="listArea" class="posts"></div>
+    </div>
+  </main>
+
+<script src="script.js"></script>
+<script>
+(async function(){
+  await KBlog.seedIfEmpty();
+  const PASS = "admin123"; // <-- PASSCODE
+  const authWrap = document.getElementById("authWrap");
+  const adminArea = document.getElementById("adminArea");
+  const unlockBtn = document.getElementById("unlockBtn");
+  const passInput = document.getElementById("passInput");
+
+  unlockBtn.addEventListener("click", ()=> {
+    if(passInput.value === PASS){
+      authWrap.style.display = "none";
+      adminArea.style.display = "block";
+      initAdmin();
+    } else {
+      alert("Incorrect passcode");
+      passInput.value = "";
+      passInput.focus();
+    }
+  });
+
+  // allow Enter key
+  passInput.addEventListener("keydown", e=>{ if(e.key==="Enter") unlockBtn.click(); });
+
+  // Admin logic
+  let posts = KBlog.loadPosts();
+  let editIndex = null;
+
+  const titleEl = document.getElementById("title");
+  const tagEl = document.getElementById("tag");
+  const reviewEl = document.getElementById("review");
+  const photoEl = document.getElementById("photo");
+  const saveBtn = document.getElementById("saveBtn");
+  const newBtn = document.getElementById("newBtn");
+  const listArea = document.getElementById("listArea");
+
+  function renderList(){
+    posts = KBlog.loadPosts();
+    listArea.innerHTML = "";
+    if(posts.length===0) listArea.innerHTML = '<div class="post-card"><p class="small">No posts yet.</p></div>';
+    posts.forEach((p, idx)=>{
+      const el = document.createElement("div");
+      el.className = "post-card";
+      el.innerHTML = `
+        <h2>${p.title}</h2>
+        <div class="meta"><div class="small">${p.date || KBlog.prettyDate(p.dateCreated)}</div><div class="badge">${p.tag}</div></div>
+        <div class="excerpt">${p.review.length>180 ? p.review.slice(0,180)+'…' : p.review}</div>
+        <div class="card-actions">
+          <button class="btn" data-edit="${idx}">Edit</button>
+          <button class="btn ghost" data-delete="${idx}">Delete</button>
+        </div>
+      `;
+      listArea.appendChild(el);
+    });
+    // attach events
+    listArea.querySelectorAll("[data-edit]").forEach(btn=>{
+      btn.addEventListener("click", e=>{
+        const i = Number(e.currentTarget.getAttribute("data-edit"));
+        startEdit(i);
+      });
+    });
+    listArea.querySelectorAll("[data-delete]").forEach(btn=>{
+      btn.addEventListener("click", e=>{
+        const i = Number(e.currentTarget.getAttribute("data-delete"));
+        if(confirm("Delete this post?")){
+          posts.splice(i,1);
+          KBlog.savePosts(posts);
+          renderList();
+        }
+      });
+    });
+  }
+
+  function resetForm(){
+    editIndex = null;
+    titleEl.value = "";
+    tagEl.value = "Blog";
+    reviewEl.value = "";
+    photoEl.value = "";
+    document.getElementById("formTitle").innerText = "Create Blog Post";
+  }
+
+  function startEdit(i){
+    editIndex = i;
+    const p = posts[i];
+    titleEl.value = p.title;
+    tagEl.value = p.tag;
+    reviewEl.value = p.review;
+    document.getElementById("formTitle").innerText = "Edit Blog Post (date cannot be changed)";
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+
+  saveBtn.addEventListener("click", ()=>{
+    const title = titleEl.value.trim();
+    const review = reviewEl.value.trim();
+    const tag = tagEl.value;
+    const file = photoEl.files[0];
+
+    if(!title || !review) return alert("Title and review required.");
+
+    function writePost(photoData){
+      const now = Date.now();
+      if(editIndex === null){
+        const id = KBlog.genId();
+        const post = {
+          id, title, review, tag,
+          photo: photoData || "",
+          date: new Date(now).toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}),
+          dateCreated: now
+        };
+        posts.unshift(post);
+      } else {
+        const existing = posts[editIndex];
+        posts[editIndex] = {
+          ...existing,
+          title, review, tag,
+          photo: photoData || existing.photo
+          // keep existing.date and dateCreated unchanged
+        };
+      }
+      KBlog.savePosts(posts);
+      resetForm();
+      renderList();
+      alert("Saved");
+    }
+
+    if(file){
+      const reader = new FileReader();
+      reader.onload = function(e){
+        writePost(e.target.result);
+      };
+      reader.readAsDataURL(file);
+    } else writePost("");
+
+  });
+
+  newBtn.addEventListener("click", resetForm);
+
+  function initAdmin(){
+    posts = KBlog.loadPosts();
+    renderList();
+  }
+
+})();
+</script>
+<script>
+  // ====== Export blogs.json ======
+  document.getElementById("exportBtn").addEventListener("click", () => {
+    const blogs = JSON.parse(localStorage.getItem("blogs")) || [];
+
+    const blob = new Blob([JSON.stringify(blogs, null, 2)], {
+      type: "application/json"
+    });
+
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "blogs.json";
+    link.click();
+
+    URL.revokeObjectURL(link.href);
+  });
+</script>
+<script>
+  // ====== Import blogs.json ======
+  document.getElementById("importBtn").addEventListener("click", () => {
+    document.getElementById("importFile").click();
+  });
+
+  document.getElementById("importFile").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (Array.isArray(data)) {
+          localStorage.setItem("blogs", JSON.stringify(data));
+          alert("✅ blogs.json imported successfully!");
+          location.reload();
+        } else {
+          alert("❌ Invalid blogs.json format!");
+        }
+      } catch (err) {
+        alert("❌ Error reading file: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+</script>
+<script>
+  // ====== Version Badge ======
+  function updateVersionBadge() {
+    const blogs = JSON.parse(localStorage.getItem("blogs")) || [];
+    const count = blogs.length;
+
+    // Find the newest date in your blog list
+    const lastUpdate = blogs.length
+      ? new Date(Math.max(...blogs.map(b => new Date(b.date)))).toISOString().split("T")[0]
+      : "N/A";
+
+    const badge = document.getElementById("versionBadge");
+    badge.textContent = `🗓️ Last Update: ${lastUpdate} | 📰 ${count} Post${count === 1 ? "" : "s"}`;
+  }
+
+  // Run once on load
+  updateVersionBadge();
+</script>
+
+</body>
+</html>
